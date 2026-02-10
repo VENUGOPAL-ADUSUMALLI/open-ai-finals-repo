@@ -42,6 +42,16 @@ from .tasks import run_candidate_ranking_pipeline, run_matching_pipeline
     COMPANY_SIZE_CHOICES,
 )
 from .services.preferences import normalize_preferences, to_json_safe
+    Job,
+    JobAlert,
+    JobPreference,
+    MatchingRun,
+    PreferenceChangeLog,
+    WORK_MODE_CHOICES,
+    EMPLOYMENT_TYPE_CHOICES,
+    COMPANY_SIZE_CHOICES,
+)
+from .services.preferences import normalize_preferences, to_json_safe
 from .tasks import run_matching_pipeline
 
 VALID_WEIGHT_KEYS = {
@@ -1003,7 +1013,47 @@ def company_task_job_import_candidates_view(request):
                 'failed': batch_failed,
             }
         )
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsAuthenticated])
+def skill_gap_view(request, run_id):
+    run = MatchingRun.objects.filter(id=run_id, user=request.user).first()
+    if not run:
+        return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
 
+    if run.status != MatchingRun.STATUS_COMPLETED:
+        return Response(
+            {'detail': 'Skill gap analysis is only available for completed runs.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    from .services.skill_gap import analyze_skill_gaps
+    results = run.results.select_related('job').all()
+    resume_metadata = getattr(request.user, 'resume_metadata', None) or {}
+    analysis = analyze_skill_gaps(results, resume_metadata)
+    return Response(analysis, status=status.HTTP_200_OK)
+
+
+@api_view(['GET'])
+@authentication_classes([BasicAuthentication])
+@permission_classes([IsAuthenticated])
+def preference_history_view(request):
+    queryset = PreferenceChangeLog.objects.filter(user=request.user).order_by('-created_at')
+    paginator = PageNumberPagination()
+    paginator.page_size = 20
+    page = paginator.paginate_queryset(queryset, request)
+    page_queryset = page if page is not None else queryset
+    data = [
+        {
+            'id': log.id,
+            'action': log.action,
+            'preference_name': log.preference_name,
+            'changes': log.changes,
+            'snapshot_before': log.snapshot_before,
+            'snapshot_after': log.snapshot_after,
+            'created_at': log.created_at.isoformat() if log.created_at else None,
+        }
+        for log in page_queryset
+    ]
     return Response(
         {
             'job_id': job.id,
@@ -1017,6 +1067,10 @@ def company_task_job_import_candidates_view(request):
             'failed': failed_count,
             'batches': batch_summaries,
             'errors': errors_list,
+            'count': queryset.count(),
+            'next': paginator.get_next_link() if page is not None else None,
+            'previous': paginator.get_previous_link() if page is not None else None,
+            'results': data,
         },
         status=status.HTTP_200_OK,
     )

@@ -7,6 +7,9 @@ from job_search.services.candidate_ranking.orchestrator import run_candidate_ran
 from job_search.models import Job, JobAlert, JobPreference, MatchingRun
 from job_search.services.filtering import filter_jobs
 from job_search.services.matching_orchestrator import run_matching_for_run
+from job_search.models import Job, JobAlert, JobPreference, MatchingRun
+from job_search.services.filtering import filter_jobs
+from job_search.services.matching_orchestrator import run_matching_for_run
 from job_search.services.preferences import normalize_preferences
 
 ALERT_SCORE_THRESHOLD = 0.5

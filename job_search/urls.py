@@ -57,6 +57,17 @@ urlpatterns = [
 )
 
 urlpatterns = [
+    alerts_mark_read_view,
+    alerts_view,
+    matches_run_detail_view,
+    matches_runs_view,
+    preference_detail_view,
+    preference_history_view,
+    preferences_view,
+    skill_gap_view,
+)
+
+urlpatterns = [
     path('preferences/', preferences_view, name='preferences'),
     path('preferences/history/', preference_history_view, name='preference-history'),
     path('preferences/<int:preference_id>/', preference_detail_view, name='preference-detail'),

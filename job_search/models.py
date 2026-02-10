@@ -117,7 +117,128 @@ class Job(models.Model):
         return f"{self.title} at {self.company_name}"
 
 
-from django.db import models
+class JobPreference(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='job_preferences',
+    )
+    work_mode = models.CharField(max_length=20, choices=WORK_MODE_CHOICES)
+    employment_type = models.CharField(max_length=20, choices=EMPLOYMENT_TYPE_CHOICES)
+    internship_duration_weeks = models.PositiveSmallIntegerField(blank=True, null=True)
+    location = models.CharField(max_length=200, db_index=True)
+    company_size_preference = models.CharField(max_length=20, choices=COMPANY_SIZE_CHOICES)
+    stipend_min = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    stipend_max = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
+    stipend_currency = models.CharField(max_length=3, default='INR')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-updated_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user'],
+                condition=Q(is_active=True),
+                name='unique_active_job_pref_per_user',
+            ),
+            models.CheckConstraint(
+                check=(
+                    Q(stipend_min__isnull=True, stipend_max__isnull=True)
+                    | Q(stipend_min__lte=models.F('stipend_max'))
+                ),
+                name='job_pref_stipend_min_lte_max',
+            ),
+        ]
+
+    def clean(self):
+        if self.employment_type == 'INTERNSHIP' and not self.internship_duration_weeks:
+            raise ValidationError(
+                {'internship_duration_weeks': 'Required for internship employment type.'}
+            )
+        if self.employment_type == 'FULL_TIME' and self.internship_duration_weeks is not None:
+            raise ValidationError(
+                {'internship_duration_weeks': 'Must be empty for full-time employment type.'}
+            )
+
+        bounds = [self.stipend_min, self.stipend_max]
+        if any(bound is not None for bound in bounds) and any(bound is None for bound in bounds):
+            raise ValidationError(
+                'Both stipend_min and stipend_max are required when stipend is provided.'
+            )
+        if (
+            self.stipend_min is not None
+            and self.stipend_max is not None
+            and self.stipend_min > self.stipend_max
+        ):
+            raise ValidationError({'stipend_min': 'stipend_min must be <= stipend_max.'})
+
+
+class MatchingRun(models.Model):
+    STATUS_PENDING = 'PENDING'
+    STATUS_FILTERING = 'FILTERING'
+    STATUS_AGENT_RUNNING = 'AGENT_RUNNING'
+    STATUS_COMPLETED = 'COMPLETED'
+    STATUS_FAILED = 'FAILED'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_FILTERING, 'Filtering'),
+        (STATUS_AGENT_RUNNING, 'Agent Running'),
+        (STATUS_COMPLETED, 'Completed'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='matching_runs',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+        db_index=True,
+    )
+    preferences_snapshot = models.JSONField()
+    candidate_profile_snapshot = models.JSONField(blank=True, null=True)
+    filtered_jobs_count = models.IntegerField(default=0)
+    error_code = models.CharField(max_length=100, blank=True)
+    error_message = models.TextField(blank=True)
+    timing_metrics = models.JSONField(default=dict, blank=True)
+    started_at = models.DateTimeField(blank=True, null=True)
+    completed_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['status']),
+        ]
+
+
+class MatchingResult(models.Model):
+    run = models.ForeignKey(MatchingRun, on_delete=models.CASCADE, related_name='results')
+    job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name='matching_results')
+    rank = models.PositiveSmallIntegerField()
+    selection_probability = models.DecimalField(max_digits=5, decimal_places=4)
+    fit_score = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    job_quality_score = models.DecimalField(max_digits=5, decimal_places=4, null=True, blank=True)
+    why = models.TextField()
+    agent_trace = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['rank']
+        constraints = [
+            models.UniqueConstraint(fields=['run', 'rank'], name='unique_rank_per_run'),
+            models.UniqueConstraint(fields=['run', 'job'], name='unique_job_per_run'),
+        ]
 
 
 class Task(models.Model):

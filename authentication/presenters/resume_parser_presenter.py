@@ -3,8 +3,8 @@ from rest_framework.response import Response
 
 
 class ResumeParserPresenter:
-    def successful_parse_and_store_response(self):
-        return Response({"success": True}, status=status.HTTP_200_OK)
+    def successful_parse_and_store_response(self, parsed_payload):
+        return Response(parsed_payload, status=status.HTTP_200_OK)
 
     def invalid_request_response(self, message="Invalid request"):
         return Response(

@@ -65,7 +65,20 @@ class ResumeParseApiTests(TestCase):
         response = self.client.post(self.url, data={"resume_file": uploaded}, format="multipart")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data, {"success": True})
+        self.assertEqual(
+            set(response.data.keys()),
+            {
+                "personal_info",
+                "summary",
+                "experience",
+                "education",
+                "skills",
+                "certifications",
+                "projects",
+                "languages",
+            },
+        )
+        self.assertEqual(response.data["personal_info"]["full_name"], "John Doe")
 
         self.user.refresh_from_db()
         self.assertIn("personal_info", self.user.resume_metadata)

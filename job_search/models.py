@@ -123,14 +123,28 @@ class JobPreference(models.Model):
         on_delete=models.CASCADE,
         related_name='job_preferences',
     )
+    name = models.CharField(max_length=100, default='Default', blank=True)
     work_mode = models.CharField(max_length=20, choices=WORK_MODE_CHOICES)
     employment_type = models.CharField(max_length=20, choices=EMPLOYMENT_TYPE_CHOICES)
     internship_duration_weeks = models.PositiveSmallIntegerField(blank=True, null=True)
     location = models.CharField(max_length=200, db_index=True)
     company_size_preference = models.CharField(max_length=20, choices=COMPANY_SIZE_CHOICES)
+    experience_level = models.CharField(
+        max_length=50,
+        choices=Job.EXPERIENCE_LEVEL_CHOICES,
+        blank=True,
+        null=True,
+    )
     stipend_min = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     stipend_max = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     stipend_currency = models.CharField(max_length=3, default='INR')
+    preferred_sectors = models.JSONField(default=list, blank=True)
+    excluded_sectors = models.JSONField(default=list, blank=True)
+    preferred_roles = models.JSONField(default=list, blank=True)
+    excluded_keywords = models.JSONField(default=list, blank=True)
+    excluded_companies = models.JSONField(default=list, blank=True)
+    preferred_companies = models.JSONField(default=list, blank=True)
+    weights = models.JSONField(default=dict, blank=True)
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -139,9 +153,9 @@ class JobPreference(models.Model):
         ordering = ['-updated_at']
         constraints = [
             models.UniqueConstraint(
-                fields=['user'],
+                fields=['user', 'name'],
                 condition=Q(is_active=True),
-                name='unique_active_job_pref_per_user',
+                name='unique_active_pref_name_per_user',
             ),
             models.CheckConstraint(
                 condition=(
@@ -238,6 +252,81 @@ class MatchingResult(models.Model):
         constraints = [
             models.UniqueConstraint(fields=['run', 'rank'], name='unique_rank_per_run'),
             models.UniqueConstraint(fields=['run', 'job'], name='unique_job_per_run'),
+        ]
+
+
+class PreferenceChangeLog(models.Model):
+    ACTION_CREATED = 'CREATED'
+    ACTION_UPDATED = 'UPDATED'
+    ACTION_DELETED = 'DELETED'
+
+    ACTION_CHOICES = [
+        (ACTION_CREATED, 'Created'),
+        (ACTION_UPDATED, 'Updated'),
+        (ACTION_DELETED, 'Deleted'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='preference_change_logs',
+    )
+    preference = models.ForeignKey(
+        JobPreference,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='change_logs',
+    )
+    action = models.CharField(max_length=10, choices=ACTION_CHOICES)
+    preference_name = models.CharField(max_length=100, blank=True)
+    snapshot_before = models.JSONField(default=dict, blank=True)
+    snapshot_after = models.JSONField(default=dict, blank=True)
+    changes = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+        ]
+
+
+class JobAlert(models.Model):
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='job_alerts',
+    )
+    preference = models.ForeignKey(
+        JobPreference,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='alerts',
+    )
+    job = models.ForeignKey(
+        Job,
+        on_delete=models.CASCADE,
+        related_name='alerts',
+    )
+    preference_name = models.CharField(max_length=100, blank=True)
+    match_score = models.DecimalField(max_digits=5, decimal_places=4)
+    match_reasons = models.JSONField(default=list, blank=True)
+    is_read = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['user', 'preference', 'job'],
+                name='unique_alert_per_user_pref_job',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['user', '-created_at']),
+            models.Index(fields=['is_read']),
         ]
 
 

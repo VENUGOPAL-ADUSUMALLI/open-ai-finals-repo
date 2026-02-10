@@ -3,7 +3,6 @@
 import json
 from typing import Any
 
-import openai
 from django.conf import settings
 
 from authentication.services.resume.models import ParsedResume, PersonalInfo
@@ -82,8 +81,8 @@ class LLMParser:
             "Emerging Tech": ["IoT", "AR/VR", "Robotics", "Embedded Systems"],
         }
 
-        api_key = getattr(settings, "OPENAI_API_KEY", "")
-        self.openai_client = openai.AsyncOpenAI(api_key=api_key) if api_key else None
+        from job_search.services.openai_client import get_async_openai_client
+        self.openai_client = get_async_openai_client()
 
     async def parse(self, text: str) -> tuple[ParsedResume, float]:
         """Parse resume using OpenAI LLM."""

@@ -38,6 +38,42 @@ def filter_jobs(preferences):
         )
         metrics['after_stipend_overlap'] = jobs.count()
 
+    # Feature 1: Experience level filter
+    experience_level = preferences.get('experience_level')
+    if experience_level:
+        jobs = jobs.filter(experience_level=experience_level)
+        metrics['after_experience_level'] = jobs.count()
+
+    # Feature 2: Sector preference filters
+    preferred_sectors = preferences.get('preferred_sectors', [])
+    excluded_sectors = preferences.get('excluded_sectors', [])
+
+    if excluded_sectors:
+        for sector in excluded_sectors:
+            jobs = jobs.exclude(sector__icontains=sector)
+        metrics['after_excluded_sectors'] = jobs.count()
+
+    if preferred_sectors:
+        sector_q = Q()
+        for sector in preferred_sectors:
+            sector_q |= Q(sector__icontains=sector)
+        jobs = jobs.filter(sector_q)
+        metrics['after_preferred_sectors'] = jobs.count()
+
+    # Feature 3: Excluded keywords (hard filter on title)
+    excluded_keywords = preferences.get('excluded_keywords', [])
+    if excluded_keywords:
+        for keyword in excluded_keywords:
+            jobs = jobs.exclude(title__icontains=keyword)
+        metrics['after_excluded_keywords'] = jobs.count()
+
+    # Feature 4: Excluded companies (hard filter)
+    excluded_companies = preferences.get('excluded_companies', [])
+    if excluded_companies:
+        for company in excluded_companies:
+            jobs = jobs.exclude(company_name__icontains=company)
+        metrics['after_excluded_companies'] = jobs.count()
+
     ordered_jobs = jobs.order_by('-published_at', '-created_at')
     full_count = ordered_jobs.count()
     metrics['ordered_count'] = full_count

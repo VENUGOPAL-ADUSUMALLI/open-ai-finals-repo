@@ -144,7 +144,7 @@ class JobPreference(models.Model):
                 name='unique_active_job_pref_per_user',
             ),
             models.CheckConstraint(
-                check=(
+                condition=(
                     Q(stipend_min__isnull=True, stipend_max__isnull=True)
                     | Q(stipend_min__lte=models.F('stipend_max'))
                 ),

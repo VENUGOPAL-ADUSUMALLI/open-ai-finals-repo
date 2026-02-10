@@ -376,6 +376,169 @@ class MatchingRunApiTests(TestCase):
         self.assertEqual(response.data['error']['message'], 'Mock failure')
 
 
+class JobRecommendationApiTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username='rec-user',
+            email='rec@example.com',
+            password='password123',
+            resume_metadata={
+                'skills': [
+                    {'category': 'Programming', 'skills': ['Python', 'Django', 'REST APIs']},
+                    {'category': 'Data', 'skills': ['SQL', 'PostgreSQL']},
+                ]
+            },
+        )
+        self.user_no_resume = get_user_model().objects.create_user(
+            username='no-resume-user',
+            email='noresume@example.com',
+            password='password123',
+        )
+        self.client = APIClient()
+        self.url = reverse('job-recommendations')
+
+    def _create_jobs(self):
+        Job.objects.create(
+            job_id='rec-job-1',
+            title='Python Backend Developer',
+            description='We need a Python Django developer with REST API experience and SQL knowledge.',
+            company_name='Tech Startup',
+            location='Bangalore, India',
+            job_url='https://example.com/rec-job-1',
+            work_mode='REMOTE',
+            employment_type='FULL_TIME',
+            company_size='STARTUP',
+        )
+        Job.objects.create(
+            job_id='rec-job-2',
+            title='Frontend Developer',
+            description='React and JavaScript developer needed for UI work.',
+            company_name='Web Corp',
+            location='Mumbai, India',
+            job_url='https://example.com/rec-job-2',
+            work_mode='ONSITE',
+            employment_type='FULL_TIME',
+            company_size='MNC',
+        )
+        Job.objects.create(
+            job_id='rec-job-3',
+            title='Data Analyst Intern',
+            description='SQL and Python skills required for data analysis internship.',
+            company_name='Data Labs',
+            location='Bangalore, India',
+            job_url='https://example.com/rec-job-3',
+            work_mode='REMOTE',
+            employment_type='INTERNSHIP',
+            internship_duration_weeks=12,
+            company_size='STARTUP',
+        )
+
+    def test_unauthenticated_returns_401(self):
+        response = self.client.post(self.url, data={}, format='json')
+        self.assertEqual(response.status_code, 401)
+
+    def test_no_resume_returns_400(self):
+        self.client.force_authenticate(user=self.user_no_resume)
+        response = self.client.post(self.url, data={}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.data['code'], 'RESUME_NOT_FOUND')
+
+    def test_minimal_request_returns_recommendations(self):
+        self._create_jobs()
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(self.url, data={}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('recommendations', response.data)
+        self.assertIn('total_jobs_considered', response.data)
+        self.assertIn('resume_skills_count', response.data)
+        self.assertEqual(response.data['total_jobs_considered'], 3)
+        self.assertGreater(len(response.data['recommendations']), 0)
+
+    def test_recommendations_have_correct_shape(self):
+        self._create_jobs()
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(self.url, data={}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        rec = response.data['recommendations'][0]
+        expected_fields = [
+            'id', 'job_id', 'title', 'company_name', 'location',
+            'work_mode', 'employment_type', 'skill_match_score',
+            'matched_skills', 'composite_score', 'match_reasons',
+        ]
+        for field in expected_fields:
+            self.assertIn(field, rec, f'Missing field: {field}')
+
+    def test_location_filter(self):
+        self._create_jobs()
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(self.url, data={'location': 'mumbai'}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        for rec in response.data['recommendations']:
+            self.assertIn('Mumbai', rec['location'])
+
+    def test_employment_type_filter(self):
+        self._create_jobs()
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            self.url, data={'employment_type': 'INTERNSHIP', 'internship_duration_weeks': 12}, format='json'
+        )
+
+        self.assertEqual(response.status_code, 200)
+        for rec in response.data['recommendations']:
+            self.assertEqual(rec['employment_type'], 'INTERNSHIP')
+
+    def test_work_mode_filter(self):
+        self._create_jobs()
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(self.url, data={'work_mode': 'REMOTE'}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        for rec in response.data['recommendations']:
+            self.assertEqual(rec['work_mode'], 'REMOTE')
+
+    def test_invalid_work_mode_returns_400(self):
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(self.url, data={'work_mode': 'INVALID'}, format='json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('work_mode', response.data)
+
+    def test_top_n_limits_results(self):
+        self._create_jobs()
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(self.url, data={'top_n': 1}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertLessEqual(len(response.data['recommendations']), 1)
+
+    def test_python_jobs_ranked_higher(self):
+        self._create_jobs()
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(self.url, data={}, format='json')
+
+        self.assertEqual(response.status_code, 200)
+        recs = response.data['recommendations']
+        # The Python Backend Developer job should rank higher than Frontend Developer
+        # because the user has Python, Django, REST APIs, SQL skills
+        python_job = next((r for r in recs if r['job_id'] == 'rec-job-1'), None)
+        frontend_job = next((r for r in recs if r['job_id'] == 'rec-job-2'), None)
+        self.assertIsNotNone(python_job)
+        self.assertIsNotNone(frontend_job)
+        self.assertGreater(python_job['skill_match_score'], frontend_job['skill_match_score'])
+
+    def test_no_matching_jobs_returns_empty(self):
+        self._create_jobs()
+        self.client.force_authenticate(user=self.user)
+        response = self.client.post(
+            self.url, data={'location': 'NonexistentCity'}, format='json'
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data['total_jobs_considered'], 0)
+        self.assertEqual(response.data['recommendations'], [])
+
+
 @override_settings(AGENT_MATCHING_ENABLED=False)
 class MatchingRunFeatureFlagTests(TestCase):
     def setUp(self):

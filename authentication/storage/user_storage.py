@@ -1,5 +1,6 @@
 from typing import Optional
 from django.contrib.auth.hashers import make_password, check_password
+from django.utils import timezone
 from authentication.models import User
 
 
@@ -96,3 +97,41 @@ class UserStorage:
             username = f"{base_username}{counter}"
             counter += 1
         return username
+
+    def save_resume_metadata(self, user: User, resume_metadata: dict) -> User:
+        user.resume_metadata = resume_metadata
+        user.resume_last_parsed_at = timezone.now()
+        user.save(update_fields=["resume_metadata", "resume_last_parsed_at", "updated_at"])
+        return user
+
+    def seed_user_profile_from_personal_info(self, user: User, personal_info) -> User:
+        updated_fields = []
+
+        full_name = getattr(personal_info, "full_name", None)
+        if full_name and not (user.first_name or user.last_name):
+            parts = [part for part in full_name.strip().split(" ") if part]
+            if parts:
+                user.first_name = parts[0]
+                updated_fields.append("first_name")
+                if len(parts) > 1:
+                    user.last_name = " ".join(parts[1:])
+                    updated_fields.append("last_name")
+
+        phone = getattr(personal_info, "phone", None)
+        if phone and not user.phone_number:
+            user.phone_number = phone.strip()
+            updated_fields.append("phone_number")
+
+        address = getattr(personal_info, "address", None)
+        if address and not user.address:
+            user.address = address.strip()
+            updated_fields.append("address")
+            if not user.location:
+                city_guess = address.split(",")[0].strip()
+                if len(city_guess) > 2:
+                    user.location = city_guess
+                    updated_fields.append("location")
+
+        if updated_fields:
+            user.save(update_fields=list(set(updated_fields + ["updated_at"])))
+        return user

@@ -1,148 +1,204 @@
-# API Specification
+# API Specification (Current Codebase)
+
+This document reflects the current implementation in:
+- `job_search_backend/urls.py`
+- `authentication/urls.py`, `authentication/views.py`
+- `job_search/urls.py`, `job_search/views.py`
 
 ## Base URL
 - Local: `http://127.0.0.1:8000`
-- API Prefix: `/api`
+- API Prefixes:
+  - Auth APIs: `/api/auth/`
+  - Job/Candidate APIs: `/api/`
 
-## Authentication
-All documented endpoints require authentication.
+---
 
-Current implementation uses HTTP Basic Authentication.
+## Authentication Summary
 
-Example header:
+### Auth endpoints (`/api/auth/*`)
+- `signup`, `signin`, `google`: `AllowAny`
+- `profile`: `IsAuthenticated` (default DRF auth classes)
+- `resume/parse/v1`: explicit `JWTAuthentication`, `SessionAuthentication`, `BasicAuthentication`
+
+### Job/Candidate endpoints (`/api/*`)
+All job_search endpoints are explicitly:
+- `BasicAuthentication`
+- `IsAuthenticated`
+
+Use header:
 ```http
 Authorization: Basic <base64(username:password)>
 ```
 
 ---
 
-## Current Flow
-1. Client submits preferences.
-2. Backend validates + normalizes preference data.
-3. Deterministic filtering runs on jobs data.
-4. For async flow, a `MatchingRun` is created and ranking is executed via task pipeline.
-5. Client polls run detail endpoint for status and top results.
+## Feature Flags
+
+- `AGENT_MATCHING_ENABLED` (default `true`)
+  - Controls: `POST /api/matching/runs/`
+- `CANDIDATE_AI_ENABLED` (default `true`)
+  - Controls: `POST /api/company-task-jobs/ranking-runs/`
 
 ---
 
-## Common Preference Object
-Used by both deterministic and async APIs.
+## 1) Authentication APIs
 
+### 1.1 Signup
+`POST /api/auth/signup/`
+
+Request body:
 ```json
 {
-  "work_mode": "REMOTE",
-  "employment_type": "INTERNSHIP",
-  "internship_duration_weeks": 12,
-  "location": "Bangalore",
-  "company_size_preference": "STARTUP",
-  "stipend_min": "10000.00",
-  "stipend_max": "20000.00",
-  "stipend_currency": "INR",
-  "save_preference": true
+  "email": "user@example.com",
+  "password": "password123",
+  "confirm_password": "password123",
+  "username": "user1",
+  "phone_number": "9999999999",
+  "age": 22,
+  "gender": "Male",
+  "address": "Some address"
 }
 ```
 
-### Preference Fields
-- `work_mode` (required, enum): `REMOTE`, `ONSITE`
-- `employment_type` (required, enum): `FULL_TIME`, `INTERNSHIP`
-- `internship_duration_weeks` (conditional, integer)
-  - Required when `employment_type=INTERNSHIP`
-  - Must be omitted for `employment_type=FULL_TIME`
-- `location` (required, string, max 200)
-- `company_size_preference` (required, enum): `SME`, `STARTUP`, `MNC`
-- `stipend_min` (optional decimal)
-- `stipend_max` (optional decimal)
-- `stipend_currency` (optional string, max 3, default `INR`)
-- `save_preference` (optional boolean, default `true`)
+Success `201`:
+```json
+{
+  "success": true,
+  "message": "User created successfully",
+  "access": "<jwt>",
+  "refresh": "<jwt>"
+}
+```
 
-### Validation Rules
-- Internship duration rule enforced as above.
-- If stipend is provided, both `stipend_min` and `stipend_max` are required.
-- `stipend_min <= stipend_max`.
-
-### Deterministic Filtering Rules
-- Exact match: `work_mode`, `employment_type`, `company_size`.
-- Location: case-insensitive contains (`location__icontains`) after normalization.
-- Internship: exact `internship_duration_weeks` match.
-- Stipend overlap (when provided):
-  - `job.stipend_max >= preference.stipend_min`
-  - `job.stipend_min <= preference.stipend_max`
-  - currency match
-- Ordering: `published_at DESC`, then `created_at DESC`.
+Common errors:
+- `400` validation/user already exists
+- `500` server error
 
 ---
 
-## 1) Deterministic Preference Match API
+### 1.2 Signin
+`POST /api/auth/signin/`
 
-### Endpoint
+Request body:
+```json
+{
+  "email": "user@example.com",
+  "password": "password123"
+}
+```
+
+Success `200`:
+```json
+{
+  "access": "<jwt>",
+  "refresh": "<jwt>"
+}
+```
+
+Common errors:
+- `400` validation error
+- `401` invalid credentials
+
+---
+
+### 1.3 Profile
+`GET /api/auth/profile/`
+
+Requires auth.
+
+Success `200`:
+```json
+{
+  "success": true,
+  "user": {
+    "id": 1,
+    "email": "user@example.com",
+    "username": "user1",
+    "phone_number": "9999999999",
+    "age": 22,
+    "gender": "Male",
+    "address": "Some address",
+    "profile_picture": null,
+    "created_at": "...",
+    "updated_at": "..."
+  }
+}
+```
+
+---
+
+### 1.4 Google Auth
+`POST /api/auth/google/`
+
+Request body:
+```json
+{
+  "id_token": "<google-id-token>"
+}
+```
+
+Success:
+- `200` existing user
+- `201` new user
+
+Response includes:
+- `success`, `message`, `is_new_user`, `is_profile_complete`
+- `access`, `refresh`
+- `user` object
+
+Common errors:
+- `400` validation
+- `401` invalid Google token
+- `409` account link error
+
+---
+
+### 1.5 Resume Parse V1
+`POST /api/auth/resume/parse/v1/`
+
+Auth: JWT / Session / Basic
+Content type: `multipart/form-data`
+
+Form field:
+- `resume_file` (required, `.pdf` or `.docx`, max 5MB)
+
+Success `200`:
+- Returns parsed resume payload in schema fields:
+  - `personal_info`, `summary`, `experience`, `education`, `skills`, `certifications`, `projects`, `languages`
+
+Common errors:
+- `400` invalid request / no text extracted
+- `500` parsing error
+
+---
+
+## 2) Job Matching APIs (existing job dataset)
+
+### 2.1 Deterministic Preference Match
 `POST /api/preferences/match-jobs/`
 
-### Purpose
-Returns filtered jobs immediately and optionally saves active preference for the user.
+Required fields:
+- `work_mode`: `REMOTE | ONSITE`
+- `employment_type`: `FULL_TIME | INTERNSHIP`
+- `location`
+- `company_size_preference`: `SME | STARTUP | MNC`
 
-### Request Body
-Use the **Common Preference Object**.
+Conditional fields:
+- `internship_duration_weeks` required for `INTERNSHIP`
 
-### Success Response
-Status: `200 OK`
+Optional:
+- `stipend_min`, `stipend_max`, `stipend_currency` (both min/max must be provided together)
+- `save_preference` (default `true`)
 
-```json
-{
-  "preference": {
-    "work_mode": "REMOTE",
-    "employment_type": "INTERNSHIP",
-    "internship_duration_weeks": 12,
-    "location": "bangalore",
-    "company_size_preference": "STARTUP",
-    "stipend_min": "10000.00",
-    "stipend_max": "20000.00",
-    "stipend_currency": "INR"
-  },
-  "count": 12,
-  "next": null,
-  "previous": null,
-  "results": [
-    {
-      "id": 1,
-      "job_id": "12345",
-      "title": "Backend Intern",
-      "company_name": "Acme",
-      "location": "Bangalore, India",
-      "work_mode": "REMOTE",
-      "employment_type": "INTERNSHIP",
-      "internship_duration_weeks": 12,
-      "company_size": "STARTUP",
-      "stipend_min": "12000.00",
-      "stipend_max": "18000.00",
-      "stipend_currency": "INR",
-      "job_url": "https://example.com/job/12345",
-      "apply_url": "https://example.com/apply/12345",
-      "apply_type": "EASY_APPLY",
-      "published_at": "2026-02-06"
-    }
-  ]
-}
-```
-
-### Errors
-- `400 Bad Request` (validation failure)
-- `401 Unauthorized` (missing/invalid auth)
-- `405 Method Not Allowed` (non-POST)
+Success `200`:
+- `preference`, `count`, `next`, `previous`, `results[]`
 
 ---
 
-## 2) Create Async Matching Run
-
-### Endpoint
+### 2.2 Create Async Matching Run
 `POST /api/matching/runs/`
 
-### Purpose
-Creates an async matching run and starts pipeline execution.
-
-### Feature Flag
-If `AGENT_MATCHING_ENABLED=false`, this endpoint returns `503`.
-
-### Request Body
+Request body:
 ```json
 {
   "preferences": {
@@ -150,11 +206,7 @@ If `AGENT_MATCHING_ENABLED=false`, this endpoint returns `503`.
     "employment_type": "INTERNSHIP",
     "internship_duration_weeks": 12,
     "location": "Bangalore",
-    "company_size_preference": "STARTUP",
-    "stipend_min": "10000.00",
-    "stipend_max": "20000.00",
-    "stipend_currency": "INR",
-    "save_preference": true
+    "company_size_preference": "STARTUP"
   },
   "candidate_profile": {
     "career_stage": "EARLY",
@@ -163,149 +215,260 @@ If `AGENT_MATCHING_ENABLED=false`, this endpoint returns `503`.
 }
 ```
 
-### Success Response
-Status: `202 Accepted`
-
+Success `202`:
 ```json
 {
-  "run_id": "0b3a7ef0-1f74-4e5e-bec4-7dd35f95c56c",
+  "run_id": "<uuid>",
   "status": "PENDING",
-  "submitted_at": "2026-02-07T11:20:10.123456Z"
+  "submitted_at": "..."
 }
 ```
 
-### Errors
-- `400 Bad Request` (invalid payload)
-- `401 Unauthorized`
-- `503 Service Unavailable` (agentic matching disabled)
+Errors:
+- `400` invalid payload
+- `503` if `AGENT_MATCHING_ENABLED=false`
 
 ---
 
-## 3) List Async Matching Runs
-
-### Endpoint
+### 2.3 List Matching Runs
 `GET /api/matching/runs/list/`
 
-### Purpose
-Returns paginated runs for the authenticated user only.
+Success `200`:
+- paginated `results[]` with run status/count/timestamps
 
-### Success Response
-Status: `200 OK`
+---
 
+### 2.4 Matching Run Detail
+`GET /api/matching/runs/{run_id}/`
+
+Success `200`:
+- `status`, `filtered_jobs_count`, `preference_used`, `timings`
+- `top_5_jobs` when completed
+- `error` block when failed
+
+`404` if not found/not owned
+
+---
+
+### 2.5 Skill-Based Job Recommendation
+`POST /api/jobs/recommend/`
+
+Uses `request.user.resume_metadata.skills`.
+
+Optional filters:
+- `work_mode`, `employment_type`, `location`, `company_size_preference`
+- `internship_duration_weeks`, stipend filters
+- `top_n` (default 10, range 1-50)
+
+Success `200`:
+- `preferences`, `total_jobs_considered`, `resume_skills_count`, `recommendations[]`
+
+Error:
+- `400` with `code: RESUME_NOT_FOUND` if resume metadata missing
+
+---
+
+## 3) Company Task Job + Candidate Import APIs
+
+### 3.1 Create Company Task Job
+`POST /api/company-task-jobs/`
+
+Request body:
 ```json
 {
-  "count": 2,
-  "next": null,
-  "previous": null,
-  "results": [
+  "job_description": "Backend engineer with Django + APIs"
+}
+```
+
+Success `201`:
+```json
+{
+  "id": 100,
+  "job_description": "Backend engineer with Django + APIs",
+  "created_at": "..."
+}
+```
+
+Error:
+- `400` if `job_description` missing/blank
+
+---
+
+### 3.2 Import Candidates from Google Sheet
+`POST /api/company-task-jobs/import-candidates/`
+
+Request body:
+```json
+{
+  "job_id": 100,
+  "spreadsheet_url": "https://docs.google.com/spreadsheets/d/<id>/edit",
+  "range_name": "Sheet1!A1:Z1000",
+  "batch_size": 10
+}
+```
+
+Rules:
+- Required sheet headers:
+  - `name`
+  - `email`
+  - `resume_link` OR `Resume Link`
+- `name`, `email`, `resume_link` required per row
+- Duplicate candidates for same job+email are skipped
+- Resume is parsed from Drive link and stored in `JobCandidate.resume_data` as JSON string
+
+Success `200`:
+```json
+{
+  "job_id": 100,
+  "spreadsheet_id": "<id>",
+  "range_name": "Sheet1!A1:Z1000",
+  "batch_size": 10,
+  "total_rows": 30,
+  "processed": 30,
+  "created": 25,
+  "skipped": 3,
+  "failed": 2,
+  "batches": [
     {
-      "run_id": "0b3a7ef0-1f74-4e5e-bec4-7dd35f95c56c",
-      "status": "COMPLETED",
-      "filtered_jobs_count": 12,
-      "created_at": "2026-02-07T11:20:10.123456Z",
-      "completed_at": "2026-02-07T11:20:11.123456Z"
+      "start_row": 2,
+      "end_row": 11,
+      "created": 8,
+      "skipped": 1,
+      "failed": 1
     }
+  ],
+  "errors": [
+    {"row": 7, "error": "Email is missing."}
   ]
 }
 ```
 
-### Errors
-- `401 Unauthorized`
+Errors:
+- `400` invalid input/headers/sheet fetch failure
+- `404` job not found
 
 ---
 
-## 4) Get Matching Run Detail
+## 4) Recruiter Preference API
 
-### Endpoint
-`GET /api/matching/runs/{run_id}/`
+### 4.1 Upsert Recruiter Preference for Job
+`POST /api/company-task-jobs/preferences/`
 
-### Purpose
-Returns run status, timings, preference used, and top jobs when completed.
+Request body:
+```json
+{
+  "job_id": 100,
+  "college_tiers": ["TIER_1", "TIER_2"],
+  "min_experience_years": 0,
+  "max_experience_years": 2,
+  "number_of_openings": 3,
+  "coding_platform_criteria": [
+    {"platform": "codeforces", "metric": "rating", "operator": "gte", "value": 1400}
+  ]
+}
+```
 
-### Run Status Values
+Validation:
+- `college_tiers` non-empty list, values in `TIER_1|TIER_2|TIER_3`
+- no duplicate tiers
+- `min_experience_years >= 0`
+- `max_experience_years >= min_experience_years`
+- `number_of_openings >= 1`
+- coding criteria operator in `gte|lte|eq`
+
+Success:
+- `201` created
+- `200` updated
+
+Response:
+```json
+{
+  "job_id": 100,
+  "college_tiers": ["TIER_1", "TIER_2"],
+  "min_experience_years": "0.0",
+  "max_experience_years": "2.0",
+  "number_of_openings": 3,
+  "coding_platform_criteria": [...],
+  "updated_at": "..."
+}
+```
+
+Errors:
+- `400` validation
+- `404` job not found
+
+---
+
+## 5) AI Candidate Ranking Run APIs
+
+### 5.1 Create/Trigger Ranking Run
+`POST /api/company-task-jobs/ranking-runs/`
+
+Request body:
+```json
+{
+  "job_id": 100,
+  "batch_size": 20,
+  "force_recompute": false
+}
+```
+
+Behavior:
+- Requires recruiter preference for the job.
+- If `force_recompute=false` and a completed run exists, API returns existing run (`reused=true`).
+- Otherwise creates new run and queues Celery task `run_candidate_ranking_pipeline`.
+
+Responses:
+- `202 Accepted` for new run
+- `200 OK` reused existing completed run
+- `400` validation/missing recruiter preference
+- `404` job not found
+- `503` if `CANDIDATE_AI_ENABLED=false`
+
+---
+
+### 5.2 Ranking Run Detail
+`GET /api/company-task-jobs/ranking-runs/{run_id}/`
+
+Success `200`:
+- run metadata:
+  - `run_id`, `job_id`, `status`, counts, `batch_size`, `model_name`, errors, timings
+- `results[]` sorted by rank with fields:
+  - `rank`, `candidate_id`, `name`, `email`, `is_shortlisted`, `passes_hard_filter`, `final_score`, `sub_scores`, `filter_reasons`, `summary`
+
+`404` if run not found
+
+---
+
+### 5.3 Ranking Run List for Job
+`GET /api/company-task-jobs/{job_id}/ranking-runs/`
+
+Success `200`:
+- paginated list of run metadata (same as run summary)
+
+---
+
+## 6) Status Enums
+
+### MatchingRun.status
 - `PENDING`
 - `FILTERING`
 - `AGENT_RUNNING`
 - `COMPLETED`
 - `FAILED`
 
-### Success Response (Completed)
-Status: `200 OK`
-
-```json
-{
-  "run_id": "0b3a7ef0-1f74-4e5e-bec4-7dd35f95c56c",
-  "status": "COMPLETED",
-  "filtered_jobs_count": 12,
-  "preference_used": {
-    "work_mode": "REMOTE",
-    "employment_type": "INTERNSHIP",
-    "internship_duration_weeks": 12,
-    "location": "bangalore",
-    "company_size_preference": "STARTUP",
-    "stipend_min": "10000.00",
-    "stipend_max": "20000.00",
-    "stipend_currency": "INR"
-  },
-  "timings": {
-    "filtering_ms": 13,
-    "agent_ms_total": 45,
-    "total_ms": 64,
-    "deterministic_metrics": {
-      "initial_count": 5000,
-      "after_primary_filters": 220,
-      "after_internship_duration": 180,
-      "after_stipend_overlap": 120,
-      "ordered_count": 120,
-      "capped_count": 120
-    }
-  },
-  "top_5_jobs": [
-    {
-      "rank": 1,
-      "job_id": "12345",
-      "selection_probability": "0.8123",
-      "fit_score": "0.7800",
-      "job_quality_score": "0.8300",
-      "why": "Work mode match; Employment type match; Location alignment"
-    }
-  ],
-  "error": null,
-  "started_at": "2026-02-07T11:20:10.200000Z",
-  "completed_at": "2026-02-07T11:20:11.123456Z",
-  "created_at": "2026-02-07T11:20:10.123456Z"
-}
-```
-
-### Success Response (Failed)
-Status: `200 OK`
-
-```json
-{
-  "run_id": "0b3a7ef0-1f74-4e5e-bec4-7dd35f95c56c",
-  "status": "FAILED",
-  "filtered_jobs_count": 120,
-  "preference_used": {"work_mode": "REMOTE"},
-  "timings": {},
-  "top_5_jobs": [],
-  "error": {
-    "code": "AGENT_PIPELINE_ERROR",
-    "message": "..."
-  },
-  "started_at": "2026-02-07T11:20:10.200000Z",
-  "completed_at": null,
-  "created_at": "2026-02-07T11:20:10.123456Z"
-}
-```
-
-### Errors
-- `401 Unauthorized`
-- `404 Not Found` (run not owned by user or does not exist)
+### CandidateRankingRun.status
+- `PENDING`
+- `RUNNING`
+- `COMPLETED`
+- `FAILED`
 
 ---
 
-## Operational Notes
-- Pagination size is 10 for list-style responses.
-- Async execution uses Celery task `run_matching_pipeline`.
-- If broker enqueue fails, implementation falls back to local `.run(...)` execution path.
-- `save_preference=true` updates/creates active `JobPreference` for the user.
+## 7) Notes
+
+- Pagination size for list endpoints in `job_search/views.py` is `10`.
+- Candidate ranking pipeline runs asynchronously via Celery task:
+  - `run_candidate_ranking_pipeline`
+- Candidate ranking traces and per-stage metadata are persisted in DB (`AgentTraceEvent`).
+- `CompanyTaskJob` ids start from `100` via model save logic.

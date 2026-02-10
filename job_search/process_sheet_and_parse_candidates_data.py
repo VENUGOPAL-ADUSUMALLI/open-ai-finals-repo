@@ -1,3 +1,4 @@
+import json
 import re
 from io import BytesIO
 from collections import OrderedDict
@@ -8,10 +9,9 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 
 # ================= CONSTANTS =================
-SERVICE_ACCOUNT_FILE = "/home/nitesh/open-ai-finals-repo/service_account.json"
+SERVICE_ACCOUNT_FILE = "/home/nikhil/Projects/10min_hiring/open-ai-finals-repo/service_account.json"
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 
-SPREADSHEET_ID = "11-uzrMwaD1seWEOiuucp23L1F6ecS2pXpM0X6COpCJ0"
 RANGE_NAME = "Sheet1!A1:Z1000"
 
 
@@ -83,8 +83,23 @@ def _split_into_sections_helper(text):
     return sections
 
 
+def extract_spreadsheet_id(spreadsheet_url):
+    if not spreadsheet_url:
+        return None
+
+    spreadsheet_url = spreadsheet_url.strip()
+    if re.fullmatch(r"[a-zA-Z0-9-_]{20,}", spreadsheet_url):
+        return spreadsheet_url
+
+    match = re.search(r"/spreadsheets/d/([a-zA-Z0-9-_]+)", spreadsheet_url)
+    return match.group(1) if match else None
+
+
 # ================= GOOGLE SHEET =================
-def fetch_rows_from_sheet():
+def fetch_rows_from_sheet(spreadsheet_id, range_name=RANGE_NAME):
+    if not spreadsheet_id:
+        raise ValueError("spreadsheet_id is required")
+
     creds = service_account.Credentials.from_service_account_file(
         SERVICE_ACCOUNT_FILE,
         scopes=SCOPES
@@ -93,8 +108,8 @@ def fetch_rows_from_sheet():
     service = build("sheets", "v4", credentials=creds)
 
     rows = service.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID,
-        range=RANGE_NAME
+        spreadsheetId=spreadsheet_id,
+        range=range_name,
     ).execute().get("values", [])
 
     return rows
@@ -116,8 +131,8 @@ def parse_resume_from_drive_link(resume_link):
 
 
 # ================= MAIN LOGIC =================
-def process_candidates():
-    rows = fetch_rows_from_sheet()
+def process_candidates(spreadsheet_id, range_name=RANGE_NAME):
+    rows = fetch_rows_from_sheet(spreadsheet_id=spreadsheet_id, range_name=range_name)
 
     if not rows:
         print("❌ No data found in Google Sheet")
@@ -153,4 +168,9 @@ def process_candidates():
 
 # ================= ENTRY POINT =================
 if __name__ == "__main__":
-    process_candidates()
+    # Local script mode keeps compatibility by accepting either a full URL or raw ID.
+    default_source = "11-uzrMwaD1seWEOiuucp23L1F6ecS2pXpM0X6COpCJ0"
+    parsed_id = extract_spreadsheet_id(default_source)
+    if not parsed_id:
+        raise ValueError("Invalid default spreadsheet source")
+    process_candidates(parsed_id)

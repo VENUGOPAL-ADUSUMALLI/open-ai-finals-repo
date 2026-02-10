@@ -17,3 +17,6 @@ db.sqlite3
 
 # Generated data exports
 dataset_linkedin-jobs-scraper_*.json
+
+# Secrets
+service_account.json

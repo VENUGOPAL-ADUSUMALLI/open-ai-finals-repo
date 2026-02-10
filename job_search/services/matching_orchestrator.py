@@ -72,6 +72,9 @@ def run_matching_for_run(matching_run):
             )
 
     timing_metrics['agent_ms_total'] = agent_ms
+    gpt_metrics = pipeline_result.get('gpt_metrics', {})
+    if gpt_metrics:
+        timing_metrics['gpt_scoring'] = gpt_metrics
     timing_metrics['total_ms'] = int((perf_counter() - started) * 1000)
 
     matching_run.status = MatchingRun.STATUS_COMPLETED

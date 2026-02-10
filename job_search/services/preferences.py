@@ -12,6 +12,13 @@ def normalize_preferences(preferences):
     if not normalized.get('stipend_currency'):
         normalized['stipend_currency'] = 'INR'
 
+    # Normalize list fields to lowercase
+    for field in ('preferred_sectors', 'excluded_sectors', 'preferred_roles',
+                  'excluded_keywords', 'excluded_companies', 'preferred_companies'):
+        items = normalized.get(field)
+        if items and isinstance(items, list):
+            normalized[field] = [item.strip().lower() for item in items if isinstance(item, str)]
+
     return normalized
 
 

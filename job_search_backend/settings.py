@@ -173,3 +173,19 @@ CELERY_TASK_EAGER_PROPAGATES = True
 
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 OPENAI_MODEL = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
+
+CANDIDATE_AI_ENABLED = os.getenv('CANDIDATE_AI_ENABLED', 'true').lower() == 'true'
+CANDIDATE_AI_MAX_CONCURRENCY = int(os.getenv('CANDIDATE_AI_MAX_CONCURRENCY', '5'))
+CANDIDATE_AI_TIMEOUT_SECONDS = int(os.getenv('CANDIDATE_AI_TIMEOUT_SECONDS', '60'))
+# GPT-powered job scoring (disabled by default, must be explicitly enabled)
+GPT_JOB_SCORING_ENABLED = os.getenv('GPT_JOB_SCORING_ENABLED', 'false').lower() == 'true'
+GPT_JOB_SCORING_TOP_N = int(os.getenv('GPT_JOB_SCORING_TOP_N', '15'))
+GPT_JOB_SCORING_TIMEOUT = int(os.getenv('GPT_JOB_SCORING_TIMEOUT', '20'))
+
+# Celery Beat schedule for periodic tasks
+CELERY_BEAT_SCHEDULE = {
+    'check-new-job-alerts': {
+        'task': 'job_search.tasks.check_new_job_alerts',
+        'schedule': 6 * 60 * 60,  # every 6 hours
+    },
+}

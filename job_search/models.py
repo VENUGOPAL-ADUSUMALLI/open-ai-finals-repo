@@ -70,3 +70,37 @@ class Job(models.Model):
 
     def __str__(self):
         return f"{self.title} at {self.company_name}"
+
+
+from django.db import models
+
+
+class Task(models.Model):
+    role = models.CharField(max_length=255)
+    job_description = models.TextField()
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.role
+
+
+class Candidate(models.Model):
+    task = models.ForeignKey(
+        Task,
+        on_delete=models.CASCADE,
+        related_name="candidates"
+    )
+
+    name = models.CharField(max_length=255)
+
+    resume_data = models.JSONField()   # parsed resume sections
+
+    gpt_score = models.IntegerField(null=True, blank=True)
+    gpt_verdict = models.CharField(max_length=100, null=True, blank=True)
+    gpt_reason = models.TextField(null=True, blank=True)
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.task.role})"

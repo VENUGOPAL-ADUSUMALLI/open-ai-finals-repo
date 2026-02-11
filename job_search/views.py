@@ -3,7 +3,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from rest_framework import status
-from rest_framework.authentication import BasicAuthentication
+from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.permissions import IsAuthenticated
@@ -171,27 +171,32 @@ def _coerce_string_list(value, field, errors, max_items=50):
     return result
 
 
-def _coerce_weights(value, field, errors):
-    if value is None:
+def _priorities_to_weights(priorities, field, errors):
+    if priorities is None:
         return {}
-    if not isinstance(value, dict):
-        errors[field] = 'Must be an object.'
+    if not isinstance(priorities, list):
+        errors[field] = 'Must be a list of priority keys ordered from highest to lowest.'
         return {}
-    result = {}
-    for key, weight in value.items():
+    if len(priorities) == 0:
+        return {}
+    seen = set()
+    for key in priorities:
+        if not isinstance(key, str):
+            errors[field] = 'Each priority must be a string.'
+            return {}
         if key not in VALID_WEIGHT_KEYS:
-            errors[field] = f'Invalid weight key: {key}. Valid keys: {", ".join(sorted(VALID_WEIGHT_KEYS))}'
+            errors[field] = f'Invalid priority key: {key}. Valid keys: {", ".join(sorted(VALID_WEIGHT_KEYS))}'
             return {}
-        try:
-            w = float(weight)
-        except (TypeError, ValueError):
-            errors[field] = f'Weight for {key} must be a number.'
+        if key in seen:
+            errors[field] = f'Duplicate priority key: {key}'
             return {}
-        if w < 0.0 or w > 1.0:
-            errors[field] = f'Weight for {key} must be between 0.0 and 1.0.'
-            return {}
-        result[key] = w
-    return result
+        seen.add(key)
+    n = len(priorities)
+    total = n * (n + 1) / 2
+    weights = {}
+    for i, key in enumerate(priorities):
+        weights[key] = round((n - i) / total, 2)
+    return weights
 
 
 def _validate_preference_payload(data):
@@ -268,8 +273,8 @@ def _validate_preference_payload(data):
         if overlap:
             errors['preferred_companies'] = f'Cannot overlap with excluded_companies: {", ".join(overlap)}'
 
-    # Weights
-    weights = _coerce_weights(data.get('weights'), 'weights', errors)
+    # Priorities → Weights
+    weights = _priorities_to_weights(data.get('priorities'), 'priorities', errors)
 
     # Name (for multi-profile)
     name = _coerce_str(data.get('name'), 'name', errors, max_length=100) or 'Default'
@@ -337,6 +342,7 @@ def _preference_from_model(preference):
         'excluded_companies': preference.excluded_companies,
         'preferred_companies': preference.preferred_companies,
         'weights': preference.weights,
+        'priorities': sorted(preference.weights.keys(), key=lambda k: preference.weights[k], reverse=True) if preference.weights else [],
     }
 
 
@@ -440,9 +446,9 @@ def _serialize_candidate_ranking_result(result):
     }
 
 
-@api_view(['POST'])
+
 @api_view(['GET', 'POST', 'DELETE'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def preferences_view(request):
     if request.method == 'GET':
@@ -521,7 +527,7 @@ def preferences_view(request):
 
 
 @api_view(['GET', 'PUT', 'DELETE'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def preference_detail_view(request, preference_id):
     preference = JobPreference.objects.filter(
@@ -575,7 +581,7 @@ def preference_detail_view(request, preference_id):
 
 
 @api_view(['GET', 'POST'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def matches_runs_view(request):
     if request.method == 'GET':
@@ -686,7 +692,7 @@ def matches_runs_view(request):
 
 
 @api_view(['GET'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def matches_run_detail_view(request, run_id):
     run = MatchingRun.objects.filter(id=run_id, user=request.user).first()
@@ -752,7 +758,7 @@ def matches_run_detail_view(request, run_id):
 
 
 @api_view(['GET'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def skill_gap_view(request, run_id):
     run = MatchingRun.objects.filter(id=run_id, user=request.user).first()
@@ -773,7 +779,7 @@ def skill_gap_view(request, run_id):
 
 
 @api_view(['GET'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def preference_history_view(request):
     queryset = PreferenceChangeLog.objects.filter(user=request.user).order_by('-created_at')
@@ -805,7 +811,7 @@ def preference_history_view(request):
 
 
 @api_view(['POST'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def company_task_job_create_view(request):
     job_description = request.data.get('job_description')
@@ -827,7 +833,7 @@ def company_task_job_create_view(request):
 
 
 @api_view(['POST'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def company_task_job_import_candidates_view(request):
     spreadsheet_url = request.data.get('spreadsheet_url')
@@ -994,7 +1000,7 @@ def company_task_job_import_candidates_view(request):
                 'failed': batch_failed,
             }
         )
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def skill_gap_view(request, run_id):
     run = MatchingRun.objects.filter(id=run_id, user=request.user).first()
@@ -1015,7 +1021,7 @@ def skill_gap_view(request, run_id):
 
 
 @api_view(['GET'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def preference_history_view(request):
     queryset = PreferenceChangeLog.objects.filter(user=request.user).order_by('-created_at')
@@ -1058,7 +1064,7 @@ def preference_history_view(request):
 
 
 @api_view(['POST'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def company_task_job_preference_upsert_view(request):
     payload = request.data
@@ -1185,7 +1191,7 @@ def company_task_job_preference_upsert_view(request):
 
 
 @api_view(['POST'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def candidate_ranking_run_create_view(request):
     if not getattr(settings, 'CANDIDATE_AI_ENABLED', True):
@@ -1261,7 +1267,7 @@ def candidate_ranking_run_create_view(request):
 
 
 @api_view(['GET'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def candidate_ranking_run_detail_view(request, run_id):
     run = CandidateRankingRun.objects.filter(id=run_id).select_related('job').first()
@@ -1279,7 +1285,7 @@ def candidate_ranking_run_detail_view(request, run_id):
 
 
 @api_view(['GET'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def candidate_ranking_run_list_view(request, job_id):
     run_queryset = CandidateRankingRun.objects.filter(job_id=job_id).order_by('-created_at')
@@ -1298,7 +1304,7 @@ def candidate_ranking_run_list_view(request, job_id):
         status=status.HTTP_200_OK,
     )
 @api_view(['GET'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def alerts_view(request):
     queryset = JobAlert.objects.filter(user=request.user).select_related('job', 'preference')
@@ -1336,7 +1342,7 @@ def alerts_view(request):
 
 
 @api_view(['POST'])
-@authentication_classes([BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def alerts_mark_read_view(request):
     alert_ids = request.data.get('alert_ids')

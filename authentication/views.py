@@ -1,4 +1,3 @@
-from rest_framework.authentication import BasicAuthentication, SessionAuthentication
 from rest_framework.decorators import api_view, authentication_classes, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -57,7 +56,7 @@ def google_auth_view(request):
 
 
 @api_view(['POST'])
-@authentication_classes([JWTAuthentication, SessionAuthentication, BasicAuthentication])
+@authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def parse_resume_v1_view(request):
     resume_file = request.FILES.get('resume_file')

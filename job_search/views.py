@@ -16,10 +16,12 @@ from .models import (
     CandidateRankingRun,
     CandidateRankingResult,
     CompanyTaskJob,
-    JobCandidate,
     Job,
+    JobAlert,
+    JobCandidate,
     JobPreference,
     MatchingRun,
+    PreferenceChangeLog,
     RECRUITER_COLLEGE_TIERS,
     RecruiterJobPreference,
 )
@@ -32,27 +34,6 @@ from .services.filtering import filter_jobs
 from .services.preferences import normalize_preferences, to_json_safe
 from .services.skill_matching import extract_skills_from_resume, score_and_rank_jobs
 from .tasks import run_candidate_ranking_pipeline, run_matching_pipeline
-    Job,
-    JobAlert,
-    JobPreference,
-    MatchingRun,
-    PreferenceChangeLog,
-    WORK_MODE_CHOICES,
-    EMPLOYMENT_TYPE_CHOICES,
-    COMPANY_SIZE_CHOICES,
-)
-from .services.preferences import normalize_preferences, to_json_safe
-    Job,
-    JobAlert,
-    JobPreference,
-    MatchingRun,
-    PreferenceChangeLog,
-    WORK_MODE_CHOICES,
-    EMPLOYMENT_TYPE_CHOICES,
-    COMPANY_SIZE_CHOICES,
-)
-from .services.preferences import normalize_preferences, to_json_safe
-from .tasks import run_matching_pipeline
 
 VALID_WEIGHT_KEYS = {
     'work_mode', 'location', 'stipend', 'company_size',

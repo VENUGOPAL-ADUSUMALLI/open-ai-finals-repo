@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from django.test.utils import override_settings
 from django.urls import reverse
@@ -792,3 +793,47 @@ class MatchedJobsPaginationTests(TestCase):
         filtered_response = self.client.get(detail_url, {'min_score': '0.99'})
         total_filtered = filtered_response.data['matched_jobs']['count']
         self.assertLessEqual(total_filtered, total_all)
+
+
+class CompanyTaskJobCreateViewTests(TestCase):
+    def setUp(self):
+        self.client = APIClient()
+        self.user = get_user_model().objects.create_user(
+            username='company-job-user',
+            email='company-job-user@example.com',
+            password='password123',
+        )
+        self.url = reverse('company-task-job-create')
+
+    def test_create_company_task_job_with_text_description(self):
+        self.client.force_authenticate(user=self.user)
+        payload = {
+            'job_name': 'Backend Engineer',
+            'job_description': 'Need Django and PostgreSQL experience.',
+        }
+        response = self.client.post(self.url, data=payload, format='json')
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['job_name'], 'Backend Engineer')
+        self.assertIn('Django', response.data['job_description'])
+
+    def test_create_company_task_job_with_uploaded_txt_description(self):
+        self.client.force_authenticate(user=self.user)
+        txt_file = SimpleUploadedFile(
+            'jd.txt',
+            b'Need Python, Django, and REST API experience.',
+            content_type='text/plain',
+        )
+
+        response = self.client.post(
+            self.url,
+            data={
+                'job_name': 'Backend Engineer',
+                'job_description_file': txt_file,
+            },
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.data['job_name'], 'Backend Engineer')
+        self.assertIn('Python', response.data['job_description'])

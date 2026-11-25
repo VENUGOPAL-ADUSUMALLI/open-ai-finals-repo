@@ -369,6 +369,7 @@ class Candidate(models.Model):
 
 class CompanyTaskJob(models.Model):
     id = models.IntegerField(primary_key=True, editable=False)
+    job_name = models.CharField(max_length=255, blank=True, null=True)
     job_description = models.TextField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -377,6 +378,8 @@ class CompanyTaskJob(models.Model):
         ordering = ['id']
 
     def __str__(self):
+        if self.job_name:
+            return f'{self.job_name} ({self.id})'
         return f'Job {self.id}'
 
     def save(self, *args, **kwargs):

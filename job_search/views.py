@@ -31,6 +31,10 @@ from .process_sheet_and_parse_candidates_data import (
     parse_resume_from_drive_link,
 )
 from .services.filtering import filter_jobs
+from .services.job_description_parser import (
+    JobDescriptionParseError,
+    parse_job_description_file,
+)
 from .services.preferences import normalize_preferences, to_json_safe
 from .services.skill_matching import extract_skills_from_resume, score_and_rank_jobs
 from .tasks import run_candidate_ranking_pipeline, run_matching_pipeline
@@ -814,17 +818,52 @@ def preference_history_view(request):
 @authentication_classes([JWTAuthentication])
 @permission_classes([IsAuthenticated])
 def company_task_job_create_view(request):
-    job_description = request.data.get('job_description')
-    if job_description is None or str(job_description).strip() == '':
+    job_name = request.data.get('job_name')
+    if job_name is None or str(job_name).strip() == '':
         return Response(
-            {'job_description': 'This field is required.'},
+            {'job_name': 'This field is required.'},
             status=status.HTTP_400_BAD_REQUEST,
         )
 
-    created_job = CompanyTaskJob.objects.create(job_description=str(job_description).strip())
+    job_description_text = request.data.get('job_description')
+    job_description_file = request.FILES.get('job_description_file')
+
+    description_from_text = (
+        str(job_description_text).strip()
+        if job_description_text is not None
+        else ''
+    )
+    description_from_file = ''
+
+    if job_description_file is not None:
+        try:
+            description_from_file = parse_job_description_file(job_description_file).strip()
+        except JobDescriptionParseError as exc:
+            return Response(
+                {'job_description_file': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+    final_description = description_from_text or description_from_file
+    if not final_description:
+        return Response(
+            {
+                'job_description': (
+                    'Provide job_description text or upload job_description_file '
+                    '(.txt, .pdf, .docx).'
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    created_job = CompanyTaskJob.objects.create(
+        job_name=str(job_name).strip(),
+        job_description=final_description,
+    )
     return Response(
         {
             'id': created_job.id,
+            'job_name': created_job.job_name,
             'job_description': created_job.job_description,
             'created_at': created_job.created_at.isoformat() if created_job.created_at else None,
         },
